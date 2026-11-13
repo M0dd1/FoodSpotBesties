@@ -1,5 +1,5 @@
 // FoodiSpots – Restaurant-Suche
-//  action "search": Freitext (z. B. "delphi koblenz") -> Treffer aus OpenStreetMap (Nominatim)
+//  action "search": Freitext (z. B. "delphi koblenz") -> Treffer aus OpenStreetMap (Nominatim, sonst Photon + OSM-API)
 //  action "enrich": Treffer (oder nur Freitext) -> Küchenrichtung, Beschreibung, Preisniveau … per Claude + Websuche
 // Secrets: ANTHROPIC_API_KEY (optional, ohne Key gibt es nur die OSM-Daten), ANTHROPIC_MODEL (optional)
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -9,7 +9,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const UA = "FoodiSpots/2.0 (private Gruppen-App, Supabase-Projekt bnhagdnfaekhyjbokggp)";
+const UA = "FoodiSpots/2.0 (+https://foodispots.netlify.app; private Gruppen-App)";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -110,24 +110,91 @@ function toCandidate(r: any) {
   };
 }
 
-async function nominatim(params: Record<string, string>) {
+// Nominatim sperrt Anfragen aus manchen Rechenzentren (403). Dann weichen wir für 6 h auf
+// Photon (Suche) + OSM-API (Tags wie cuisine, opening_hours, website) aus – gleiches Datenformat.
+let nominatimBlockedUntil = 0;
+const FOOD_TAGS = ["amenity:restaurant", "amenity:fast_food", "amenity:cafe", "amenity:bar", "amenity:pub", "amenity:biergarten", "amenity:ice_cream", "amenity:food_court", "shop:bakery", "shop:pastry"];
+
+async function nominatimDirect(params: Record<string, string>) {
   const u = new URL("https://nominatim.openstreetmap.org/search");
-  for (const [k, v] of Object.entries({ format: "jsonv2", addressdetails: "1", extratags: "1", namedetails: "1", "accept-language": "de", ...params })) u.searchParams.set(k, v);
-  const res = await fetch(u, { headers: { "User-Agent": UA } });
-  if (!res.ok) throw new Error(`Nominatim ${res.status}`);
+  const { lat: _lat, lon: _lon, ...rest } = params;
+  for (const [k, v] of Object.entries({ format: "jsonv2", addressdetails: "1", extratags: "1", namedetails: "1", "accept-language": "de", ...rest })) u.searchParams.set(k, v);
+  const res = await fetch(u, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw Object.assign(new Error(`Nominatim ${res.status}`), { status: res.status });
   return await res.json();
+}
+
+// deno-lint-ignore no-explicit-any
+async function osmTags(rows: any[]) {
+  const ids: Record<string, string[]> = { node: [], way: [], relation: [] };
+  const food = rows.filter((r) => mapCategory(r.category, r.type));
+  for (const r of (food.length ? food : rows.slice(0, 3))) if (ids[r.osm_type]) ids[r.osm_type].push(String(r.osm_id));
+  const tags: Record<string, Record<string, string>> = {};
+  await Promise.all(Object.entries(ids).filter(([, l]) => l.length).map(async ([t, l]) => {
+    try {
+      const res = await fetch(`https://api.openstreetmap.org/api/0.6/${t}s.json?${t}s=${l.join(",")}`, { headers: { "User-Agent": UA, Accept: "application/json" }, signal: AbortSignal.timeout(6000) });
+      if (!res.ok) return;
+      // deno-lint-ignore no-explicit-any
+      for (const e of (await res.json()).elements ?? []) tags[`${e.type}:${e.id}`] = e.tags ?? {};
+    } catch (_) { /* ohne Zusatz-Tags weiter */ }
+  }));
+  for (const r of rows) {
+    const t = tags[`${r.osm_type}:${r.osm_id}`];
+    if (t) { r.extratags = t; if (t.name) r.namedetails = { name: t.name }; }
+  }
+  return rows;
+}
+
+async function photon(params: Record<string, string>, foodOnly = false) {
+  const u = new URL("https://photon.komoot.io/api/");
+  u.searchParams.set("q", foodOnly ? params.q.replace(/\s+restaurant$/i, "") : params.q);
+  u.searchParams.set("limit", String(Math.min(Number(params.limit ?? 10) * 2, 20)));
+  u.searchParams.set("lang", "de");
+  if (params.lat && params.lon) { u.searchParams.set("lat", params.lat); u.searchParams.set("lon", params.lon); }
+  if (foodOnly) for (const t of FOOD_TAGS) u.searchParams.append("osm_tag", t);
+  const res = await fetch(u, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(8000) });
+  if (!res.ok) throw new Error(`Photon ${res.status}`);
+  const cc = params.countrycodes ? new Set(params.countrycodes.split(",")) : null;
+  const TYPES: Record<string, string> = { N: "node", W: "way", R: "relation" };
+  // deno-lint-ignore no-explicit-any
+  const rows = ((await res.json()).features ?? []).map((f: any) => {
+    const p = f.properties ?? {};
+    return {
+      lat: f.geometry?.coordinates?.[1], lon: f.geometry?.coordinates?.[0],
+      osm_type: TYPES[p.osm_type] ?? p.osm_type, osm_id: p.osm_id,
+      category: p.osm_key, type: p.osm_value, name: p.name ?? "",
+      countrycode: String(p.countrycode ?? "").toLowerCase(),
+      address: { road: p.street, house_number: p.housenumber, postcode: p.postcode, city: p.city ?? p.locality ?? p.district },
+      display_name: [p.name, [p.street, p.housenumber].filter(Boolean).join(" "), p.city].filter(Boolean).join(", "),
+    };
+  // deno-lint-ignore no-explicit-any
+  }).filter((r: any) => r.lat != null && (!cc || !r.countrycode || cc.has(r.countrycode))).slice(0, Number(params.limit ?? 10));
+  return await osmTags(rows);
+}
+
+async function nominatim(params: Record<string, string>, foodOnly = false) {
+  if (Date.now() > nominatimBlockedUntil) {
+    try { return await nominatimDirect(params); }
+    catch (e) {
+      const st = (e as { status?: number }).status;
+      if (st === 403 || st === 429) nominatimBlockedUntil = Date.now() + 6 * 3600e3;
+      console.warn(`Nominatim nicht nutzbar (${(e as Error).message}) – nehme Photon`);
+    }
+  }
+  return await photon(params, foodOnly);
 }
 
 async function search(q: string, near?: { lat: number; lng: number }) {
   const key = `search:${q.toLowerCase().replace(/\s+/g, " ").trim()}`;
   const cached = await cacheGet(key, 7);
   if (cached) return cached;
-  let rows = await nominatim({ q, limit: "10", countrycodes: "de,at,ch,nl,be,lu,fr,dk,pl,cz,it,es,hr,gr" });
+  const bias: Record<string, string> = near && isFinite(near.lat) && isFinite(near.lng) ? { lat: String(near.lat), lon: String(near.lng) } : {};
+  let rows = await nominatim({ q, limit: "10", countrycodes: "de,at,ch,nl,be,lu,fr,dk,pl,cz,it,es,hr,gr", ...bias });
   // deno-lint-ignore no-explicit-any
   let food = rows.map(toCandidate).filter((c: any) => c.is_food);
   if (!food.length) {
     await new Promise((r) => setTimeout(r, 1100)); // Nominatim: max. 1 Anfrage/Sekunde
-    rows = await nominatim({ q: `${q} restaurant`, limit: "10" });
+    rows = await nominatim({ q: `${q} restaurant`, limit: "10", ...bias }, true);
     // deno-lint-ignore no-explicit-any
     food = rows.map(toCandidate).filter((c: any) => c.is_food);
   }

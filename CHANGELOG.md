@@ -1,5 +1,8 @@
 # Änderungen
 
+## 2.0.1
+- Spot-Suche: Nominatim sperrt Anfragen vom Supabase-Server (403). Die Suche weicht jetzt automatisch auf Photon + OpenStreetMap-API aus (gleiche Daten: Adresse, Länderküche, Öffnungszeiten, Webseite, Telefon).
+
 ## 2.0.0 – 13.11.2026
 
 Kompletter Neuaufbau nach der FoodiSpots-Prompt (Architektur der Pilzkarte).

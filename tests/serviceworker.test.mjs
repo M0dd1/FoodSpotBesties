@@ -41,7 +41,7 @@ after(async () => { await browser?.close(); server?.close(); if (dist) fs.rmSync
 test('Zweiter Start kommt sofort aus dem Speicher – auch bei 6 s Verzögerung je Datei und offline; neue Version wird angezeigt', { timeout: 120000 }, async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, serviceWorkers: 'allow' });
   await ctx.route('**/supabase-js@2*/**', (r) => r.fulfill({ path: MOCK, contentType: 'text/javascript' }));
-  await ctx.route('**/leaflet@1.9.4/dist/**', (r) => { const f = path.basename(new URL(r.request().url()).pathname); return LEAFLET ? r.fulfill({ path: path.join(LEAFLET, f) }) : f.endsWith('.js') ? r.fulfill({ path: STUB, contentType: 'text/javascript' }) : r.fulfill({ body: '', contentType: 'text/css' }); });
+  await ctx.route('**/leaflet@1.9.4/dist/**', (r) => { const rel = new URL(r.request().url()).pathname.split('/dist/')[1] || ''; const f = path.basename(rel); return LEAFLET ? r.fulfill({ path: path.join(LEAFLET, rel) }) : f.endsWith('.js') ? r.fulfill({ path: STUB, contentType: 'text/javascript' }) : r.fulfill({ body: '', contentType: 'text/css' }); });
   await ctx.route(/openstreetmap|arcgisonline/, (r) => r.abort());
   const p = await ctx.newPage(); const errors = []; p.on('pageerror', (e) => errors.push(e.message));
   await p.goto(url); await p.waitForSelector('#screen-auth:not(.hidden)');

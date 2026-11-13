@@ -53,8 +53,9 @@ export async function newContext(browser, { geo = { latitude: 50.3601, longitude
   });
   await ctx.route('**/supabase-js@2*/**', (r) => r.fulfill({ path: MOCK, contentType: 'text/javascript' }));
   await ctx.route('**/leaflet@1.9.4/dist/**', (r) => {
-    const file = path.basename(new URL(r.request().url()).pathname);
-    if (LEAFLET_DIST) return r.fulfill({ path: path.join(LEAFLET_DIST, file) });
+    const rel = new URL(r.request().url()).pathname.split('/dist/')[1] || '';   // z. B. leaflet.js oder images/marker-icon.png
+    const file = path.basename(rel);
+    if (LEAFLET_DIST) return r.fulfill({ path: path.join(LEAFLET_DIST, rel) });
     return file.endsWith('.js') ? r.fulfill({ path: path.join(here, 'leaflet-stub.js'), contentType: 'text/javascript' }) : r.fulfill({ body: '', contentType: 'text/css' });
   });
   await ctx.route(/tile\.openstreetmap\.org|arcgisonline\.com/, (r) => r.abort());

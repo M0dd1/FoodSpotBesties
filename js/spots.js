@@ -188,13 +188,16 @@ export function openSpotForm(input, opts = {}) {
   renderSources();
 
   // Mini-Karte mit verschiebbarem Marker
-  const mm = L.map($('#sf-map', body), { zoomControl: false, attributionControl: false }).setView([s.lat, s.lng], opts.manualPos ? 14 : 17);
+  // ohne Animationen: das Formular kann jederzeit geschlossen werden (sonst Fehler in Leaflet)
+  const mm = L.map($('#sf-map', body), { zoomControl: false, attributionControl: false, zoomAnimation: false, fadeAnimation: false, markerZoomAnimation: false })
+    .setView([s.lat, s.lng], opts.manualPos ? 14 : 17);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(mm);
-  const mk = L.marker([s.lat, s.lng], { draggable: true }).addTo(mm);
+  const mk = L.marker([s.lat, s.lng], { draggable: true, icon: L.divIcon({ className: '', html: '<div class="pick-marker">📍</div>', iconSize: [34, 34], iconAnchor: [17, 34] }) }).addTo(mm);
   mk.on('dragend', () => { const p = mk.getLatLng(); s.lat = p.lat; s.lng = p.lng; });
   mm.on('click', (e) => { mk.setLatLng(e.latlng); s.lat = e.latlng.lat; s.lng = e.latlng.lng; });
-  setTimeout(() => mm.invalidateSize(), 150);
-  onSheetClose(() => mm.remove());
+  let mapAlive = true;
+  setTimeout(() => { if (mapAlive) mm.invalidateSize(); }, 150);
+  onSheetClose(() => { mapAlive = false; mm.off(); mm.remove(); });
 
   const read = () => ({
     name: form.name.value.trim(), address: form.address.value.trim(), category: form.category.value,

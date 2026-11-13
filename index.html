@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>FoodiSpots</title>
+  <meta name="description" content="Eure gemeinsame Restaurant-Wunschliste auf der Karte.">
+  <!-- Vorschau beim Teilen von Links (WhatsApp, Signal, Telegram …) -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="FoodiSpots">
+  <meta property="og:locale" content="de_DE">
+  <meta property="og:title" content="FoodiSpots">
+  <meta property="og:description" content="Eure gemeinsame Restaurant-Wunschliste auf der Karte.">
+  <meta property="og:image" content="https://foodispots.netlify.app/img/og.jpg">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="FoodiSpots: Karte mit Restaurants">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="theme-color" content="#c8442f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="FoodiSpots">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Laden -->
+  <section id="screen-loading" class="screen center">
+    <img class="logo-img" src="icons/icon-192.png" alt="" width="64" height="64">
+    <p class="muted">FoodiSpots wird geladen …</p>
+  </section>
+
+  <!-- Anmeldung -->
+  <section id="screen-auth" class="screen center hidden">
+    <div class="card auth-card">
+      <img class="logo-img" src="icons/icon-192.png" alt="" width="64" height="64">
+      <h1 class="brand">FoodiSpots</h1>
+      <p class="muted">Eure gemeinsame Restaurant-Wunschliste.</p>
+      <p class="auth-invite hidden" id="auth-invite"></p>
+
+      <div class="chips auth-tabs" style="justify-content:center;margin-top:16px">
+        <button class="chip on" type="button" data-auth-tab="login">Anmelden</button>
+        <button class="chip" type="button" data-auth-tab="register">Neu registrieren</button>
+      </div>
+      <form id="form-auth" class="stack">
+        <label>Name
+          <input type="text" id="auth-name" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false"
+                 required minlength="3" maxlength="30" placeholder="z. B. Anna">
+        </label>
+        <label>Passwort
+          <input type="password" id="auth-pass" autocomplete="current-password" required minlength="6" placeholder="mindestens 6 Zeichen">
+        </label>
+        <label id="auth-pass2-wrap" class="hidden">Passwort wiederholen
+          <input type="password" id="auth-pass2" autocomplete="new-password" minlength="6" placeholder="zur Sicherheit noch einmal">
+        </label>
+        <label id="auth-code-wrap" class="hidden">Einladungscode
+          <input type="text" id="auth-code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" maxlength="16" placeholder="z. B. 7F3A9C21">
+        </label>
+        <button class="btn primary big" type="submit" id="auth-submit">Anmelden</button>
+        <p class="small muted" id="auth-hint">Noch kein Konto? Oben auf „Neu registrieren“ tippen.</p>
+      </form>
+      <p class="auth-private small">Privates, nicht-kommerzielles Angebot für Freunde und Familie – kein öffentlicher Dienst. Ein Konto gibt es nur mit Einladung.</p>
+    </div>
+  </section>
+
+  <!-- Keine Gruppe -->
+  <section id="screen-groups" class="screen center hidden">
+    <div class="card auth-card">
+      <div class="logo-big">🍽️</div>
+      <h1>Gruppe wählen</h1>
+      <p class="muted">Gründe eine neue Gruppe oder tritt mit einem Einladungscode bei.</p>
+      <div id="group-choices" class="stack"></div>
+      <form id="form-join" class="stack">
+        <label>Einladungscode
+          <input type="text" id="join-code" autocapitalize="characters" placeholder="z. B. 3FA9C21B" class="code-input">
+        </label>
+        <button class="btn primary big" type="submit">Beitreten</button>
+      </form>
+      <div class="divider"><span>oder</span></div>
+      <form id="form-create" class="stack">
+        <label>Name der neuen Gruppe
+          <input type="text" id="create-name" maxlength="80" placeholder="z. B. Foodies Koblenz">
+        </label>
+        <button class="btn big" type="submit">Neue Gruppe gründen</button>
+      </form>
+      <button class="btn ghost small" id="btn-logout-2" type="button">Abmelden</button>
+    </div>
+  </section>
+
+  <!-- Hauptansicht -->
+  <section id="screen-main" class="screen hidden">
+    <header class="topbar">
+      <button id="btn-group" class="group-btn" type="button" aria-label="Gruppe und Einladen">
+        <span id="group-name">Gruppe</span><span class="chev">▾</span>
+      </button>
+      <span class="readonly-badge">👁 Nur lesen</span>
+      <div class="topbar-right">
+        <button id="sync-badge" class="sync-badge" type="button" title="Synchronisation"></button>
+        <button id="btn-filter" class="icon-btn" type="button" aria-label="Filter">
+          <svg viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4-2v-4z"/></svg>
+          <span id="filter-dot" class="dot hidden"></span>
+        </button>
+        <button id="btn-settings" class="icon-btn" type="button" aria-label="Einstellungen">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </button>
+      </div>
+    </header>
+    <nav class="viewtabs" role="tablist">
+      <button class="tab active" data-view="map" type="button" role="tab">Karte</button>
+      <button class="tab" data-view="list" type="button" role="tab">Liste</button>
+      <button class="tab" data-view="cuisines" type="button" role="tab">Länderküchen</button>
+    </nav>
+
+    <div id="view-map" class="view">
+      <div id="map"></div>
+      <div class="legend" aria-label="Legende">
+        <span><i class="lg-wish"></i>wollen wir hin</span>
+        <span><i class="lg-grad"></i>besucht: 1 → 5 ★</span>
+      </div>
+      <div class="map-controls">
+        <button id="btn-layer" class="map-btn" type="button" aria-label="Kartenansicht wechseln">
+          <svg viewBox="0 0 24 24"><path d="M12 3 2 8l10 5 10-5-10-5zM2 13l10 5 10-5M2 17.5l10 5 10-5"/></svg>
+        </button>
+        <button id="btn-locate" class="map-btn" type="button" aria-label="Mein Standort">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        </button>
+      </div>
+      <div id="map-hint" class="map-hint hidden">Lange auf die Karte tippen, um dort einen Spot einzutragen.</div>
+    </div>
+
+    <div id="view-list" class="view hidden">
+      <div class="list-toolbar">
+        <input type="search" id="list-search" placeholder="Name, Ort, Küche, Gericht …" autocomplete="off" aria-label="In euren Spots suchen">
+        <select id="list-sort" aria-label="Sortierung">
+          <option value="new">Neueste</option>
+          <option value="want">Meiste „Will ich auch“</option>
+          <option value="rating">Beste Note</option>
+          <option value="distance">Entfernung</option>
+          <option value="name">Name</option>
+        </select>
+      </div>
+      <p id="list-count" class="small muted list-count"></p>
+      <ul id="spot-list" class="spot-list"></ul>
+    </div>
+
+    <div id="view-cuisines" class="view hidden"><div id="cuisine-body" class="cuisine-body"></div></div>
+
+    <div class="fab-row">
+      <button id="btn-random" class="fab-pill soft" type="button">🎲 Wohin heute?</button>
+      <button id="btn-add" class="fab-pill primary" type="button">＋ Spot eintragen</button>
+    </div>
+  </section>
+
+  <!-- Bottom-Sheet für Details, Formulare, Einstellungen -->
+  <div id="sheet-backdrop" class="sheet-backdrop hidden"></div>
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-handle"></div>
+    <div id="sheet-body" class="sheet-body"></div>
+  </div>
+
+  <!-- Bild-Großansicht -->
+  <div id="lightbox" class="lightbox hidden">
+    <img id="lightbox-img" alt="">
+    <div id="lightbox-caption" class="lightbox-caption"></div>
+    <button id="lightbox-close" class="lightbox-close" type="button" aria-label="Schließen">✕</button>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js" integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok" crossorigin="anonymous"></script>
+  <script src="config.js"></script>
+  <script src="cuisines.js"></script>
+  <script src="exif.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

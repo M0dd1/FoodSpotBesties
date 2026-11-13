@@ -1,14 +1,41 @@
+# Netlify: statische Seite. Veröffentlicht wird nur der Ordner "dist" mit den App-Dateien –
+# Tests, Skripte, SQL, Prompt und Anleitungen aus dem Repository bleiben privat.
 [build]
-  publish = "web"
+  publish = "dist"
+  command = "rm -rf dist && mkdir dist && cp -r index.html styles.css config.js cuisines.js exif.js sw.js manifest.webmanifest robots.txt icons img js dist/ && sed -i \"s/__BUILD__/${COMMIT_REF:-local}-$(date +%s)/\" dist/sw.js"
 
+# Sicherheits-Header für alle Seiten
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://unpkg.com; img-src 'self' data: blob: https://unpkg.com https://tile.openstreetmap.org https://server.arcgisonline.com; connect-src 'self' https://bnhagdnfaekhyjbokggp.supabase.co wss://bnhagdnfaekhyjbokggp.supabase.co https://unpkg.com https://cdn.jsdelivr.net https://tile.openstreetmap.org https://server.arcgisonline.com; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "geolocation=(self), camera=(self), microphone=(), payment=(), usb=()"
+    Cross-Origin-Opener-Policy = "same-origin"
+
+# Service Worker und Startseite nie zwischenspeichern, damit Updates sofort ankommen
 [[headers]]
   for = "/sw.js"
   [headers.values]
     Cache-Control = "no-cache"
 
 [[headers]]
-  for = "/*"
+  for = "/index.html"
   [headers.values]
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "strict-origin-when-cross-origin"
-    Permissions-Policy = "geolocation=(self), camera=(self)"
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+# Der Branch "backup" enthält die Datensicherung und darf nie veröffentlicht werden
+[context.backup]
+  ignore = "exit 0"

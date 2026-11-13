@@ -1,0 +1,66 @@
+# Sichert Daten und Fotos zweimal pro Woche in den Branch "backup".
+# Läuft NUR, wenn das Repository privat ist – sonst wären Bewertungen und Fotos öffentlich.
+# Benötigt das Repository-Secret BACKUP_TOKEN (gleicher Wert wie das Supabase-Secret BACKUP_TOKEN).
+name: Sicherung
+
+on:
+  schedule:
+    - cron: '17 3 * * 1,4'   # Montag + Donnerstag 03:17 UTC – hält Supabase nebenbei wach
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency: backup
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Nur in privatem Repository sichern
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          private=$(curl -fsS -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/${{ github.repository }}" | jq -r .private)
+          if [ "$private" != "true" ]; then
+            echo "::error::Das Repository ist öffentlich. Sicherung abgebrochen – erst unter Settings → General → Danger Zone auf 'Private' stellen."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+        with:
+          path: app
+
+      - name: Backup-Branch vorbereiten
+        working-directory: app
+        run: |
+          git config --global user.name "FoodiSpots Sicherung"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin backup >/dev/null; then
+            git fetch --depth=1 origin backup:backup
+            git worktree add ../backup backup
+          else
+            git worktree add --orphan -b backup ../backup
+          fi
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Daten und Fotos holen
+        env:
+          BACKUP_TOKEN: ${{ secrets.BACKUP_TOKEN }}
+          SUPABASE_URL: https://bnhagdnfaekhyjbokggp.supabase.co
+        run: node app/scripts/backup.mjs backup
+
+      - name: Speichern
+        working-directory: backup
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Keine Änderungen seit der letzten Sicherung."
+          else
+            git commit -q -m "Sicherung $(date -u +%F)"
+            git push origin backup
+          fi

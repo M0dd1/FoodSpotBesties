@@ -9,7 +9,7 @@ const cors = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
-const UA = "FoodiSpots/1.0 (private Gruppen-App, Supabase-Projekt bnhagdnfaekhyjbokggp)";
+const UA = "FoodiSpots/2.0 (private Gruppen-App, Supabase-Projekt bnhagdnfaekhyjbokggp)";
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
@@ -223,9 +223,18 @@ Erfinde nichts. Unbekanntes bleibt leer bzw. null. Antworte am Ende ausschließl
   return result;
 }
 
+const MAX_PER_DAY = Number(Deno.env.get("LOOKUP_MAX_PER_DAY") ?? 200);
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   if (req.method !== "POST") return json({ error: "Nur POST" }, 405);
+  // Nur angemeldete Nutzer (schützt den API-Key vor Missbrauch), mit Tageslimit
+  const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+  const { data: who } = token ? await db.auth.getUser(token) : { data: null };
+  const uid = who?.user?.id;
+  if (!uid) return json({ error: "Bitte anmelden." }, 401);
+  const { data: allowed } = await db.rpc("count_lookup", { uid, max_per_day: MAX_PER_DAY });
+  if (allowed === false) return json({ error: "Tageslimit für die Suche erreicht – morgen geht es weiter." }, 429);
   // deno-lint-ignore no-explicit-any
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Ungültige Anfrage" }, 400); }

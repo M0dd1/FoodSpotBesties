@@ -1,0 +1,10 @@
+# FoodiSpots: Startseite darf gefunden werden, geteilte Gruppen-Links nicht
+User-agent: *
+Disallow: /*?view=
+Disallow: /*&view=
+Disallow: /*?join=
+Disallow: /*&join=
+Disallow: /*?invite=
+Disallow: /*&invite=
+Disallow: /*?group=
+Disallow: /*?spot=

@@ -29,7 +29,7 @@ Frag mich das Folgende. Wo es eine sinnvolle Empfehlung gibt, schlag sie als ers
 
 ### Allgemein
 1. **Name der App und der ersten Gruppe?** (bisher: „FoodiSpots“, Gruppe z. B. „Foodies Koblenz“)
-2. **Wer wird Super-Admin?** (Vorschlag: der Nutzername **„Moddi“**, nur dieser eine)
+2. **Wer wird Super-Admin?** (bisher: der Nutzername **„Marcel“**, nur dieser eine)
 3. **Auf welchen Geräten wird hauptsächlich genutzt?** (iPhone/Safari, Android/Chrome, beides). Wichtig für Kamera, Push und Foto-Formate (HEIC).
 4. **Startregion der Karte?** (z. B. Koblenz) – wird angezeigt, solange es noch keine Spots gibt.
 
@@ -433,8 +433,8 @@ Alle `spots`, `visits`, `ratings`, `dishes`, `photos` und `comments` tragen `gro
 - Repository: `M0dd1/FoodSpotBesties` (privat), Branch `main` (App), später `backup` (Sicherung)
 - Supabase-Projekt: „FoodiSpots“, `bnhagdnfaekhyjbokggp` (`https://bnhagdnfaekhyjbokggp.supabase.co`, eu-central-1, Free-Plan),
   Publishable Key steht in `config.js`
-- Webseite: noch offen (Netlify, automatischer Deploy aus `main`)
-- Super-Admin: `Moddi`
+- Webseite: Netlify, automatischer Deploy aus `main` (siehe README)
+- Super-Admin: `Marcel`
 - Vorlage: Pilzkarte – `M0dd1/Pilzkarte`, `https://pilzkarte.netlify.app`, Supabase `tbqtyrjvdfsnlxajbbxp`
 
 Bei einem Umzug auf neue Konten diese Werte durch die Antworten aus Abschnitt 1 ersetzen.

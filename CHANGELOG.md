@@ -1,5 +1,11 @@
 # Änderungen
 
+## 2.1.0
+- Teilen aus Google Maps: In Google Maps „Teilen“ → FoodiSpots (Android, App auf dem Startbildschirm). Überall: Google-Maps-Link ins Suchfeld einfügen. Name und Position kommen aus dem Link, das passende Lokal aus OpenStreetMap wird dazu gesucht.
+- Vorschaubilder: Neue Spots bekommen automatisch ein Bild (Webseite des Lokals oder Wikimedia), immer mit Quellenangabe. Selbst wählen unter „🖼️ Vorschaubild“ – Vorschläge, Foto eines Gerichts oder eigenes Foto.
+- „Wohin heute?“ lässt auch Spots weg, bei denen ein Besuch eingetragen ist (auch ohne Bewertung); „Nochmal“ schlägt einen anderen vor.
+- Gleichzeitiges Bearbeiten: Ändern zwei Personen verschiedene Felder, wird beides übernommen (Nachfrage nur noch bei demselben Feld).
+
 ## 2.0.1
 - Spot-Suche: Nominatim sperrt Anfragen vom Supabase-Server (403). Die Suche weicht jetzt automatisch auf Photon + OpenStreetMap-API aus (gleiche Daten: Adresse, Länderküche, Öffnungszeiten, Webseite, Telefon).
 

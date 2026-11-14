@@ -24,6 +24,19 @@ export function searchSpots(q) {
 export const enrichCandidate = (candidate) => call({ action: 'enrich', candidate });
 export const researchText = (q) => call({ action: 'enrich', q });
 
+// Geteilte Google-Maps-Links (maps.app.goo.gl/…, google.com/maps/…)
+export const GMAPS_RE = /https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|(?:www\.)?google\.[a-z.]{2,6}\/maps|maps\.google\.[a-z.]{2,6})[^\s<>"']*/i;
+export const resolveLink = (text) => call({ action: 'resolve_link', text });
+
+// Vorschaubilder: Vorschläge (Webseite des Lokals, Wikimedia) und das Bild selbst (über den Server, wegen CORS)
+export const imageCandidates = (spot) =>
+  call({ action: 'image_candidates', spot: { website: spot.website || '', osm_type: spot.osm_type || null, osm_id: spot.osm_id || null } });
+export async function fetchImage(url) {
+  const { data, error } = await call({ action: 'fetch_image', url });
+  if (error || !(data instanceof Blob) || data.size < 200) return null;
+  return data;
+}
+
 // Ergänzt nur leere Felder; eine ermittelte Küche gilt als „vermutet“, bis jemand sie bestätigt
 export function mergeEnrichment(spot, e, { weakCuisine = false } = {}) {
   if (!e?.enriched) return spot;

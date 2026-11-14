@@ -3,7 +3,7 @@
 // Neue Versionen kommen über einen neuen Service Worker: Netlify setzt bei jedem Deploy BUILD,
 // dadurch ändert sich diese Datei, der Browser installiert sie und lädt alle Dateien vorab neu.
 const BUILD = '__BUILD__';
-const VERSION = `foodispots-v2.0.0-${BUILD}`;
+const VERSION = `foodispots-v2.1.0-${BUILD}`;
 const SHELL = `${VERSION}-shell`;
 const TILES = 'foodispots-tiles';
 const MAX_TILES = 3000;

@@ -1,6 +1,6 @@
 // FoodiSpots – Fotos der Gerichte: verkleinern, offline zwischenspeichern, anzeigen
 import { $, $$, BUCKET, idb, sb, state } from './core.js';
-import { queuePhoto } from './sync.js';
+import { queuePhoto, queueSpotImage } from './sync.js';
 
 // Fotos werden als WebP gespeichert (etwa 30–40 % kleiner als JPEG bei gleicher Qualität).
 // Kann der Browser kein WebP erzeugen (manche ältere iPhones), wird es JPEG.
@@ -50,6 +50,23 @@ export async function storeDishPhoto(dish, prepared, spotId) {
 }
 
 export const dishPaths = (list) => (list || []).flatMap((d) => [d.photo_path, d.thumb_path]).filter(Boolean);
+export const spotImagePaths = (list) => (list || []).flatMap((s) => [s.image_path, s.image_thumb]).filter(Boolean);
+
+// Vorschaubild eines Spots: 1600 px + Vorschau 400 px, Quelle (credit/source) wird mitgespeichert
+export async function storeSpotImage(spot, blob, { credit = '', source = '' } = {}) {
+  const full = await resizeImage(blob, 1600, 0.8);
+  const thumb = await resizeImage(full, 400, 0.72).catch(() => null);
+  const ext = (b) => (b.type === 'image/webp' ? 'webp' : 'jpg');
+  const base = `${state.groupId}/${spot.id}/cover-${Date.now().toString(36)}`;
+  const image_path = `${base}.${ext(full)}`;
+  const image_thumb = thumb ? `${base}-klein.${ext(thumb)}` : null;
+  await idb.put('blobs', full, image_path);
+  if (thumb) await idb.put('blobs', thumb, image_thumb);
+  const src = /^https?:\/\//i.test(source) ? source.slice(0, 600) : null;
+  await queueSpotImage(spot.id, { image_path, image_thumb, image_credit: credit.slice(0, 300) || null, image_source: src }, spotImagePaths([spot]));
+}
+export const removeSpotImage = (spot) =>
+  queueSpotImage(spot.id, { image_path: null, image_thumb: null, image_credit: null, image_source: null }, spotImagePaths([spot]));
 
 // ------------------------------------------------------------------
 // Anzeigen (erst aus dem Gerätespeicher, sonst vom Server und dann merken)

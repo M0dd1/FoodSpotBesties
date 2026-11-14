@@ -3,11 +3,11 @@ import { $, $$, CATEGORIES, CAT_EMOJI, canEdit, cuisineNames, cuisineOf, distanc
   hostOf, nameOf, ratingColor, regionsOf, safeUrl, spotEmoji, starsHtml, state, toast, uuid, SUBSCORES, norm } from './core.js';
 import { closeSheet, head, onSheetClose, openSheet, priceInput, wirePrice } from './ui.js';
 import { editRow, processOutbox, remove, upsert } from './sync.js';
-import { hydratePhotos, openPhoto } from './photos.js';
+import { hydratePhotos, openLightbox, openPhoto, photoUrl, removeSpotImage, storeSpotImage } from './photos.js';
 import { map, startWatch } from './map.js';
 import { commentsOf, dishesOf, dishesOfRating, openState, ratingsOf, statsOf, visitsOf, wantsOf } from './list.js';
 import { renderAll, whoWants } from './views.js';
-import { candidateToSpot, enrichCandidate, mergeEnrichment, researchText, searchSpots } from './lookup.js';
+import { GMAPS_RE, candidateToSpot, enrichCandidate, fetchImage, imageCandidates, mergeEnrichment, researchText, resolveLink, searchSpots } from './lookup.js';
 import { openRating } from './ratings.js';
 
 export const SPOT_FIELDS = ['id', 'group_id', 'name', 'lat', 'lng', 'address', 'city', 'osm_type', 'osm_id', 'cuisines', 'cuisine_guessed',
@@ -21,12 +21,14 @@ const list = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boole
 // ------------------------------------------------------------------
 $('#btn-add').addEventListener('click', () => openAdd());
 export function openAdd(prefill = '') {
+  // Geteilter Text kann mehrzeilig sein (Name, Adresse, Link) – das Suchfeld zeigt ihn einzeilig, gesucht wird mit dem Original
+  const shared = prefill;
   const body = openSheet(`${head('Spot eintragen')}
     <form id="f-search" class="row">
-      <input name="q" id="search-q" required minlength="2" maxlength="120" placeholder="z. B. delphi koblenz" value="${esc(prefill)}" autocomplete="off" enterkeyhint="search" aria-label="Was wollt ihr ausprobieren?">
+      <input name="q" id="search-q" required minlength="2" maxlength="600" placeholder="z. B. delphi koblenz" value="${esc(prefill.replace(/\s*\n\s*/g, ' ').trim())}" autocomplete="off" enterkeyhint="search" aria-label="Was wollt ihr ausprobieren?">
       <button class="btn primary" type="submit">Suchen</button>
     </form>
-    <p class="small muted" style="margin:6px 0 0">Name und Ort reichen. Adresse, Küchenrichtung und weitere Infos werden automatisch gesucht.</p>
+    <p class="small muted" style="margin:6px 0 0">Name und Ort reichen – oder einen Google-Maps-Link einfügen. Adresse, Küchenrichtung und Bild werden automatisch gesucht.</p>
     <div id="search-results" class="stack" style="margin-top:12px"></div>
     <div class="row wrap" style="margin-top:14px">
       <button class="btn small" id="add-pick" type="button">🗺️ Auf der Karte wählen</button>
@@ -35,6 +37,8 @@ export function openAdd(prefill = '') {
   const form = $('#f-search', body);
   setTimeout(() => form.q.focus(), 50);
   form.addEventListener('submit', (e) => { e.preventDefault(); runSearch(form.q.value.trim()); });
+  // Link aus der Zwischenablage eingefügt → sofort auflösen
+  form.q.addEventListener('paste', () => setTimeout(() => { if (GMAPS_RE.test(form.q.value)) runSearch(form.q.value.trim()); }, 0));
   $('#add-manual', body).addEventListener('click', () => startManualSpot(null, form.q.value.trim()));
   $('#add-pick', body).addEventListener('click', () => {
     closeSheet();
@@ -42,11 +46,58 @@ export function openAdd(prefill = '') {
     $('#map-hint').textContent = 'Tippe auf die Stelle des Spots.';
     $('#map-hint').classList.remove('hidden');
   });
-  if (prefill) runSearch(prefill);
+  if (shared) runSearch(shared);
+}
+
+const candHtml = (c, i, extra = '') => {
+  const dup = findDuplicate({ ...c, name: c.name });
+  return `<button type="button" class="cand" data-i="${i}">
+    <b>${esc(c.cuisines?.length ? spotEmoji(c) : (CAT_EMOJI[c.category] || '📍'))} ${esc(c.name || 'Ohne Namen')}</b>
+    <span>${esc(c.address || c.display_name || '')}</span>
+    <span>${esc([c.is_food ? CATEGORIES[c.category] : 'kein Lokal – nur Adresse', cuisineNames(c.cuisines), ...(c.focus || [])].filter(Boolean).join(' · '))}${extra}</span>
+    ${dup ? '<span class="tag">steht schon auf eurer Liste</span>' : ''}
+  </button>`;
+};
+function wireCands(box, cands) {
+  $$('.cand', box).forEach((b) => b.addEventListener('click', () => {
+    const c = cands[Number(b.dataset.i)];
+    const dup = findDuplicate(c);
+    if (dup && confirm(`„${dup.name}“ steht schon auf eurer Liste. Öffnen statt neu eintragen?`)) return openSpot(dup.id);
+    const spot = candidateToSpot(c);
+    if (c.from_link) spot.source_urls = c.link ? [c.link] : [];
+    openSpotForm(spot, { enrich: c.name ? c : null, manualPos: c.lat == null });
+  }));
+}
+
+// Geteilter Google-Maps-Link: Name + Lage aus dem Link, dann das passende Lokal aus OpenStreetMap
+async function runLinkSearch(text) {
+  const box = $('#search-results');
+  box.innerHTML = '<div class="hint row"><span class="spinner"></span> Lese den Google-Maps-Link …</div>';
+  const { data, error } = await resolveLink(text);
+  if (!$('#search-results')) return;
+  if (error || !data?.found) {
+    box.innerHTML = `<div class="warn">${error === 'offline' ? 'Dafür wird Internet benötigt.' : error ? esc(error) : 'Aus dem Link ließ sich kein Ort lesen.'} Tipp den Namen des Lokals ein oder trag es ohne Suche ein.</div>`;
+    return;
+  }
+  const cands = [...(data.candidates || [])];
+  const g = data.google ? { ...data.google, link: data.link } : null;
+  if (g) cands.push(g);
+  box.innerHTML = (data.candidates?.length ? '<div class="small muted" style="font-weight:600">Gefunden – welcher ist es?</div>' : '')
+    + (data.candidates || []).map((c, i) => candHtml(c, i, c.distance_m != null ? ` · ${c.distance_m < 15 ? 'genau dort' : `${c.distance_m} m daneben`}` : '')).join('')
+    + (g ? `${data.candidates?.length ? '<div class="small muted" style="margin-top:6px">Nicht dabei?</div>' : '<div class="small muted" style="font-weight:600">Aus dem Google-Maps-Link:</div>'}
+      ${candHtml({ ...g, display_name: g.address || 'Position aus Google Maps' }, cands.length - 1, ' · Position aus Google Maps')}` : '')
+    + (!g && !data.candidates?.length ? `<div class="hint">„${esc(data.name)}“ – Lage unbekannt. Bitte auf der Karte wählen.</div>` : '');
+  wireCands(box, cands);
+  if (!g && !data.candidates?.length && data.name) {
+    box.insertAdjacentHTML('beforeend', '<button type="button" class="btn" id="btn-link-manual">Eintragen und Position wählen</button>');
+    $('#btn-link-manual', box).addEventListener('click', () => startManualSpot(null, data.name));
+  }
 }
 
 async function runSearch(q) {
   const box = $('#search-results'); if (!box || q.length < 2) return;
+  if (GMAPS_RE.test(q)) return runLinkSearch(q);
+  q = q.slice(0, 120);
   box.innerHTML = `<div class="hint row"><span class="spinner"></span> Suche „${esc(q)}“ …</div>`;
   const { data, error } = await searchSpots(q);
   if (!$('#search-results')) return;
@@ -55,22 +106,10 @@ async function runSearch(q) {
     return;
   }
   const cands = data?.candidates || [];
-  box.innerHTML = (cands.length ? '<div class="small muted" style="font-weight:600">Welcher ist es?</div>' + cands.map((c, i) => {
-    const dup = findDuplicate({ ...c, name: c.name });
-    return `<button type="button" class="cand" data-i="${i}">
-      <b>${esc(c.cuisines?.length ? spotEmoji(c) : (CAT_EMOJI[c.category] || '📍'))} ${esc(c.name)}</b>
-      <span>${esc(c.address || c.display_name || '')}</span>
-      <span>${esc([c.is_food ? CATEGORIES[c.category] : 'kein Lokal – nur Adresse', cuisineNames(c.cuisines), ...(c.focus || [])].filter(Boolean).join(' · '))}</span>
-      ${dup ? '<span class="tag">steht schon auf eurer Liste</span>' : ''}
-    </button>`;
-  }).join('') : '<div class="hint">Auf OpenStreetMap nichts gefunden.</div>')
+  box.innerHTML = (cands.length ? '<div class="small muted" style="font-weight:600">Welcher ist es?</div>' + cands.map((c, i) => candHtml(c, i)).join('')
+    : '<div class="hint">Auf OpenStreetMap nichts gefunden.</div>')
     + '<button type="button" class="btn" id="btn-research">🔎 Im Web recherchieren lassen</button>';
-  $$('.cand', box).forEach((b) => b.addEventListener('click', () => {
-    const c = cands[Number(b.dataset.i)];
-    const dup = findDuplicate(c);
-    if (dup && confirm(`„${dup.name}“ steht schon auf eurer Liste. Öffnen statt neu eintragen?`)) return openSpot(dup.id);
-    openSpotForm(candidateToSpot(c), { enrich: c });
-  }));
+  wireCands(box, cands);
   $('#btn-research', box).addEventListener('click', () => research(q));
 }
 
@@ -246,6 +285,7 @@ export function openSpotForm(input, opts = {}) {
     renderAll(false); processOutbox();
     if (map) map.setView([row.lat, row.lng], Math.max(map.getZoom(), 15));
     openSpot(id);
+    autoImage({ ...row, id });
     toast(navigator.onLine ? 'Auf der Wunschliste 🍽️' : 'Offline gespeichert – wird später hochgeladen.');
   });
 }
@@ -253,6 +293,9 @@ export function openSpotForm(input, opts = {}) {
 // ------------------------------------------------------------------
 // Detailansicht
 // ------------------------------------------------------------------
+// Routenplanung in Google Maps (öffnet auf dem Handy die Google-Maps-App) – Ziel sind die Koordinaten, damit es genau passt
+export const navUrl = (s) => `https://www.google.com/maps/dir/?api=1&destination=${Number(s.lat).toFixed(6)},${Number(s.lng).toFixed(6)}`;
+
 export function openSpot(id, keepScroll = false, opts = {}) {
   const s = state.data.spots.find((x) => x.id === id);
   if (!s) return;
@@ -264,6 +307,8 @@ export function openSpot(id, keepScroll = false, opts = {}) {
   const open = openState(s.opening_hours);
   const tab = state._spotTab === 'dishes' ? 'dishes' : 'ratings';
   const cover = st.cover;
+  // Vorschaubild des Spots hat Vorrang, sonst das beste Foto eines Gerichts
+  const coverPath = s.image_path || s.image_thumb || (cover ? cover.photo_path || cover.thumb_path : null);
   // Mitglied war bei einem Besuch dabei, hat aber noch nicht bewertet?
   const pendingVisit = !pub && !mine && visitsOf(id).find((v) => (v.participants || []).includes(state.user.id));
 
@@ -292,7 +337,8 @@ export function openSpot(id, keepScroll = false, opts = {}) {
   };
 
   const body = openSheet(`
-    ${cover ? `<div class="cover" data-bg="${esc(cover.photo_path || cover.thumb_path)}"></div>` : ''}
+    ${coverPath ? `<div class="cover" id="d-cover" role="button" tabindex="0" aria-label="Bild groß ansehen" data-bg="${esc(coverPath)}">${s.image_path && s.image_credit
+      ? `<span class="cover-credit">Bild: ${esc(s.image_credit)}</span>` : ''}</div>` : ''}
     ${head(`${esc(spotEmoji(s))} ${esc(s.name)}`)}
     ${opts.random ? '<div class="row" style="margin:-4px 0 8px"><div class="hint" style="flex:1">🎲 Wie wär’s damit?</div><button type="button" class="btn small" id="pick-again">Nochmal</button></div>' : ''}
     <div class="d-sub">${esc([cuisineNames(s.cuisines), CATEGORIES[s.category], euro(s.price_level)].filter(Boolean).join(' · '))}
@@ -315,7 +361,7 @@ export function openSpot(id, keepScroll = false, opts = {}) {
     ${s.description ? `<p class="pre" style="margin:8px 0">${esc(s.description)}</p>` : ''}
     <dl class="info-list">
       ${(s.specialties || []).length ? `<dt>⭐</dt><dd>${esc(s.specialties.join(', '))}</dd>` : ''}
-      <dt>📍</dt><dd>${s.address ? esc(s.address) + '<br>' : ''}<a href="https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}" target="_blank" rel="noopener noreferrer">Google Maps</a> ·
+      <dt>📍</dt><dd>${s.address ? esc(s.address) + '<br>' : ''}<a id="d-nav" href="${esc(navUrl(s))}" target="_blank" rel="noopener noreferrer">Google Maps</a> ·
         <a href="https://maps.apple.com/?daddr=${s.lat},${s.lng}" target="_blank" rel="noopener noreferrer">Apple Karten</a>${state.myPos ? ` · ${fmtDist(distance(state.myPos, s))} entfernt` : ''}</dd>
       ${s.opening_hours ? `<dt>🕒</dt><dd>${esc(s.opening_hours)}${open === true ? ' · <b class="ok-text">jetzt geöffnet</b>' : open === false ? ' · <span class="muted">jetzt geschlossen</span>' : ''}</dd>` : ''}
       ${web ? `<dt>🌐</dt><dd><a href="${esc(web)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(web))}</a></dd>` : ''}
@@ -349,6 +395,7 @@ export function openSpot(id, keepScroll = false, opts = {}) {
     ${pub ? '' : `<p class="small muted">Eingetragen von ${esc(nameOf(s.created_by))} am ${fmtDate(s.created_at)}</p>
     <div class="row wrap">
       <button class="btn small" id="btn-edit" type="button">✏️ Bearbeiten</button>
+      <button class="btn small" id="btn-image" type="button">🖼️ ${s.image_path ? 'Bild ändern' : 'Vorschaubild'}</button>
       ${canEdit(s) ? '<button class="btn small danger" id="btn-del" type="button">🗑 Löschen</button>' : ''}
     </div>`}`, 'spot');
   state.openSpotId = id;
@@ -386,10 +433,114 @@ export function openSpot(id, keepScroll = false, opts = {}) {
     e.preventDefault(); await remove('comments', a.dataset.delComment); openSpot(id, true); processOutbox();
   }));
   $('#btn-edit', body)?.addEventListener('click', () => openSpotForm(s));
+  $('#btn-image', body)?.addEventListener('click', () => openImagePicker(s));
+  const coverEl = $('#d-cover', body);
+  const openCover = async () => {
+    const src = await photoUrl(coverPath); if (!src) return;
+    const srcUrl = s.image_path ? safeUrl(s.image_source) : null;
+    openLightbox(src, `<b>${esc(s.name)}</b>${s.image_path && s.image_credit ? `<div class="small">Bild: ${srcUrl
+      ? `<a href="${esc(srcUrl)}" target="_blank" rel="noopener noreferrer">${esc(s.image_credit)}</a>` : esc(s.image_credit)}</div>` : ''}`);
+  };
+  coverEl?.addEventListener('click', openCover);
+  coverEl?.addEventListener('keydown', (e) => { if (e.key === 'Enter') openCover(); });
   $('#btn-del', body)?.addEventListener('click', async () => {
     if (!confirm(`„${s.name}“ in den Papierkorb legen? Der Spot lässt sich 30 Tage lang wiederherstellen (Gruppe → Papierkorb).`)) return;
     await editRow('spots', { ...pick(s, SPOT_FIELDS), deleted_at: new Date().toISOString(), deleted_by: state.user.id }, s.updated_at);
     closeSheet(); renderAll(false); processOutbox();
     toast('In den Papierkorb gelegt.');
+  });
+}
+
+// ------------------------------------------------------------------
+// Vorschaubild: automatisch beim Eintragen, oder selbst auswählen
+// ------------------------------------------------------------------
+const KIND = { commons: 'Wikimedia', website: 'Webseite', osm: 'OpenStreetMap' };
+// Für die Bildquelle den echten Namen (nameOf liefert für einen selbst „Ich“)
+const realName = (uid) => state.data.profiles?.[uid] || (uid === state.user?.id ? state.profile?.username || state.profile?.display_name : null) || 'Mitglied';
+
+async function autoImage(spot) {
+  if (!navigator.onLine || (!spot.website && !spot.osm_id)) return;
+  const { data } = await imageCandidates(spot);
+  for (const im of (data?.images || []).slice(0, 3)) {
+    const blob = await fetchImage(im.url);
+    if (!blob) continue;
+    const cur = state.data.spots.find((x) => x.id === spot.id);
+    if (!cur || cur.image_path) return;   // inzwischen gelöscht oder schon ein Bild gewählt
+    try { await storeSpotImage(cur, blob, { credit: im.credit, source: im.source }); } catch { continue; }
+    renderAll(false); processOutbox();
+    if (state.openSpotId === spot.id && state._sheetKind === 'spot') openSpot(spot.id, true);
+    return;
+  }
+}
+
+export function openImagePicker(s) {
+  const own = dishesOf(s.id).filter((d) => d.thumb_path || d.photo_path).slice(0, 6);
+  const body = openSheet(`${head('Vorschaubild')}
+    <p class="small muted" style="margin-top:0">Tippe auf ein Bild, um es als Vorschaubild für „${esc(s.name)}“ zu nehmen.</p>
+    <div class="img-grid" id="ip-grid">
+      <label class="img-opt own"><input type="file" accept="image/*" id="ip-file" hidden><span>📷<br>Eigenes Foto</span></label>
+      ${own.map((d) => `<button type="button" class="img-opt" data-dish="${d.id}" data-bg="${esc(d.thumb_path || d.photo_path)}"><span class="cap">🍽️ ${esc(d.name)}</span></button>`).join('')}
+    </div>
+    <div id="ip-status" class="hint row" style="margin-top:10px"><span class="spinner"></span> Suche Bilder auf der Webseite und bei Wikimedia …</div>
+    <p class="small muted">Bilder von Webseiten gehören den Lokalen bzw. Fotograf:innen – die Quelle wird beim Bild angezeigt.</p>
+    <div class="row wrap">
+      <button class="btn" type="button" id="ip-back">Zurück</button>
+      ${s.image_path ? '<button class="btn danger" type="button" id="ip-remove">Bild entfernen</button>' : ''}
+    </div>`, 'images');
+  hydratePhotos(body);
+  const grid = $('#ip-grid', body), status = $('#ip-status', body);
+  const alive = () => document.body.contains(grid);
+  let busy = false;
+  const choose = async (blob, credit, source) => {
+    if (busy || !blob) return; busy = true;
+    status.innerHTML = '<span class="spinner"></span> Speichere das Bild …';
+    try {
+      const cur = state.data.spots.find((x) => x.id === s.id) || s;
+      await storeSpotImage(cur, blob, { credit, source });
+    } catch { busy = false; status.textContent = 'Das Bild ließ sich nicht verarbeiten.'; return; }
+    renderAll(false); processOutbox(); openSpot(s.id);
+    toast(navigator.onLine ? 'Vorschaubild gesetzt.' : 'Vorschaubild gespeichert – wird später hochgeladen.');
+  };
+  $('#ip-back', body).addEventListener('click', () => openSpot(s.id));
+  $('#ip-remove', body)?.addEventListener('click', async () => {
+    await removeSpotImage(state.data.spots.find((x) => x.id === s.id) || s);
+    renderAll(false); processOutbox(); openSpot(s.id); toast('Vorschaubild entfernt.');
+  });
+  $('#ip-file', body).addEventListener('change', (e) => { const f = e.target.files?.[0]; if (f) choose(f, `Foto von ${realName(state.user.id)}`, ''); });
+  $$('[data-dish]', grid).forEach((b) => b.addEventListener('click', async () => {
+    const d = own.find((x) => x.id === b.dataset.dish);
+    const url = await photoUrl(d.photo_path || d.thumb_path); if (!url) return;
+    choose(await (await fetch(url)).blob(), `Foto von ${realName(d.created_by)}`, '');
+  }));
+
+  if (!navigator.onLine) { status.textContent = 'Offline – Bilder aus dem Netz lassen sich gerade nicht suchen.'; return; }
+  imageCandidates(s).then(async ({ data, error }) => {
+    if (!alive()) return;
+    const images = data?.images || [];
+    if (error || !images.length) {
+      status.textContent = error ? 'Die Bildersuche hat gerade nicht geklappt.' : (s.website ? 'Auf der Webseite und bei Wikimedia war kein passendes Bild zu finden.' : 'Ohne Webseite des Lokals lassen sich keine Bilder finden – trag sie unter „Bearbeiten“ ein oder nimm ein eigenes Foto.');
+      return;
+    }
+    let shown = 0, left = images.length;
+    const done = () => { if (--left === 0 && alive()) status.textContent = shown ? '' : 'Die gefundenen Bilder ließen sich nicht laden.'; if (!left && shown) status.classList.add('hidden'); };
+    // höchstens 3 gleichzeitig laden
+    const queue = images.map((im, i) => ({ im, i }));
+    const worker = async () => {
+      for (let job = queue.shift(); job; job = queue.shift()) {
+        const blob = await fetchImage(job.im.url);
+        if (!alive()) return;
+        if (blob) {
+          shown++;
+          const b = document.createElement('button');
+          b.type = 'button'; b.className = 'img-opt has-img'; b.style.backgroundImage = `url("${URL.createObjectURL(blob)}")`;
+          b.innerHTML = `<span class="cap">${esc(KIND[job.im.kind] || 'Web')}</span>`;
+          b.title = job.im.credit;
+          b.addEventListener('click', () => choose(blob, job.im.credit, job.im.source));
+          grid.appendChild(b);
+        }
+        done();
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
   });
 }

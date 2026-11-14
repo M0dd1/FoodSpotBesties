@@ -4,7 +4,7 @@ import { refreshPublic } from './start.js';
 import { refreshGroups, selectGroup, showGroupScreen } from './groups.js';
 import { renderAll } from './views.js';
 import { buildIndexes } from './list.js';
-import { dishPaths } from './photos.js';
+import { dishPaths, spotImagePaths } from './photos.js';
 import { addConflict, noteRemoteEdit } from './conflicts.js';
 
 // ------------------------------------------------------------------
@@ -156,6 +156,9 @@ export const remove = (table, rowId, extra = {}) => enqueue({ kind: 'delete', ta
 // Foto eines Gerichts: Dateien liegen bis zum Hochladen in IndexedDB (Schlüssel = Speicherpfad)
 export const queuePhoto = (dishId, photo_path, thumb_path, oldPaths = []) =>
   enqueue({ kind: 'photo', table: 'dishes', row: { id: dishId, photo_path, thumb_path }, oldPaths });
+// Vorschaubild eines Spots (setzen oder mit null-Pfaden entfernen)
+export const queueSpotImage = (spotId, fields, oldPaths = []) =>
+  enqueue({ kind: 'photo', table: 'spots', row: { id: spotId, ...fields }, oldPaths });
 
 // Nach 30 Tagen endgültig löschen (macht jedes Gerät, das es darf – also Ersteller oder Admin)
 export async function purgeTrash() {
@@ -164,7 +167,7 @@ export async function purgeTrash() {
   let n = 0;
   for (const s of state.data.trash.spots) {
     if (Date.parse(s.deleted_at) > limit || !canEdit(s) || queued.has(s.id)) continue;
-    await remove('spots', s.id, { paths: dishPaths(state.data.trash.dishes.filter((x) => x.spot_id === s.id)) }); n++;
+    await remove('spots', s.id, { paths: [...dishPaths(state.data.trash.dishes.filter((x) => x.spot_id === s.id)), ...spotImagePaths([s])] }); n++;
   }
   if (n) processOutbox();
 }
@@ -204,12 +207,21 @@ async function uploadBlob(path) {
 
 export async function runOp(op) {
   if (op.kind === 'photo') {
-    const okFull = await uploadBlob(op.row.photo_path);
-    const okThumb = op.row.thumb_path ? await uploadBlob(op.row.thumb_path) : false;
-    if (!okFull) return; // Datei fehlt (z. B. Speicher geleert) – nichts zu tun
-    const { error } = await sb.from('dishes').update({ photo_path: op.row.photo_path, thumb_path: okThumb ? op.row.thumb_path : null }).eq('id', op.row.id);
+    const [fk, tk] = op.table === 'spots' ? ['image_path', 'image_thumb'] : ['photo_path', 'thumb_path'];
+    const { id, ...fields } = op.row;
+    if (fields[fk]) {
+      const okFull = await uploadBlob(fields[fk]);
+      const okThumb = fields[tk] ? await uploadBlob(fields[tk]) : false;
+      if (!okFull) return; // Datei fehlt (z. B. Speicher geleert) – nichts zu tun
+      if (!okThumb) fields[tk] = null;
+    }
+    const { data, error } = await sb.from(op.table).update(fields).eq('id', id).select('id, updated_at');
     if (error) throw error;
-    if (op.oldPaths?.length) await sb.storage.from(BUCKET).remove(op.oldPaths);
+    // Spot hat dadurch einen neuen Stand – wartende Bearbeitungen bauen darauf auf (sonst Schein-Konflikt)
+    if (op.table === 'spots' && data?.[0]?.updated_at) {
+      for (const o of state.outbox) if (o !== op && o.table === 'spots' && o.row?.id === id && o.base) { o.base = data[0].updated_at; idb.put('outbox', o).catch(() => {}); }
+    }
+    if (op.oldPaths?.length) await sb.storage.from(BUCKET).remove(op.oldPaths.filter((p) => p !== fields[fk] && p !== fields[tk]));
   } else if (op.kind === 'upsert' && op.base && op.table === 'spots') {
     // Nur ändern, wenn der Eintrag seit dem Öffnen unverändert ist
     const { id, ...fields } = op.row;
@@ -221,6 +233,19 @@ export async function runOp(op) {
     } else {
       const { data: cur, error: e2 } = await sb.from(op.table).select('*').eq('id', id).maybeSingle();
       if (e2) throw e2;
+      // Hat die andere Person nur Felder geändert, die ich nicht angefasst habe (z. B. das Vorschaubild)?
+      // Dann meine Änderungen einfach auf den neuen Stand anwenden – kein Konflikt.
+      const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+      const mineChanged = op.orig ? Object.keys(fields).filter((f) => f in op.orig && !same(fields[f], op.orig[f])) : null;
+      if (cur && mineChanged && mineChanged.every((f) => same(cur[f], op.orig[f]))) {
+        if (!mineChanged.length) return;
+        const patch = Object.fromEntries(mineChanged.map((f) => [f, fields[f]]));
+        const { data: d2, error: e3 } = await sb.from(op.table).update(patch).eq('id', id).eq('updated_at', cur.updated_at).select('id');
+        if (e3) throw e3;
+        if (d2?.length) return;
+        const { data: cur2 } = await sb.from(op.table).select('*').eq('id', id).maybeSingle();
+        return void addConflict(op, cur2 || null);
+      }
       addConflict(op, cur || null);
     }
   } else if (op.kind === 'upsert') {

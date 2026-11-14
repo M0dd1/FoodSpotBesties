@@ -1,6 +1,6 @@
 // FoodiSpots – Gruppen: beitreten, gründen, verwalten, Lese-Link
 import { $, $$, BUCKET, currentGroup, emptyData, esc, freshFilters, idb, isAdmin, isNetErr, nameOf, sb, state, toast } from './core.js';
-import { dishPaths } from './photos.js';
+import { dishPaths, spotImagePaths } from './photos.js';
 import { closeSheet, head, openSheet, show } from './ui.js';
 import { fetchGroupData, processOutbox, rebuildData, subscribeRealtime } from './sync.js';
 import { initMap } from './map.js';
@@ -186,7 +186,7 @@ export function openGroupSheet() {
     const answer = prompt(`Achtung: Alle Spots, Bewertungen, Gerichte und Fotos von „${g.name}“ werden für alle gelöscht.\nZum Bestätigen den Gruppennamen eingeben:`);
     if (answer == null) return;
     if (answer.trim() !== g.name) return toast('Name stimmt nicht – nichts gelöscht.', true);
-    const paths = dishPaths([...state.data.dishes, ...state.data.trash.dishes]);
+    const paths = [...dishPaths([...state.data.dishes, ...state.data.trash.dishes]), ...spotImagePaths([...state.data.spots, ...state.data.trash.spots])];
     for (let i = 0; i < paths.length; i += 100) await sb.storage.from(BUCKET).remove(paths.slice(i, i + 100));
     const { error } = await sb.from('groups').delete().eq('id', g.id);
     if (error) return toast(isNetErr(error) ? 'Dafür wird Internet benötigt.' : 'Fehler: ' + error.message, true);

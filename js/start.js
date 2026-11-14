@@ -5,7 +5,7 @@ import { joinGroup, refreshGroups, selectGroup, showGroupScreen } from './groups
 import { rebuildData } from './sync.js';
 import { initMap, map } from './map.js';
 import { renderAll } from './views.js';
-import { openSpot } from './spots.js';
+import { openAdd, openSpot } from './spots.js';
 import { applyTheme, loadProfile } from './settings.js';
 import { showInviteHint } from './auth.js';
 import { loadConflicts } from './conflicts.js';
@@ -17,6 +17,13 @@ const params = new URLSearchParams(location.search);
 export const viewToken = params.get('view');
 export const deepLink = { group: params.get('group'), spot: params.get('spot') };
 if (deepLink.spot) history.replaceState(null, '', location.pathname);
+// Aus einer anderen App geteilt (z. B. Google Maps → Teilen → FoodiSpots): merken, bis eine Gruppe offen ist
+if (['share_title', 'share_text', 'share_url'].some((k) => params.get(k))) {
+  const shared = [params.get('share_title'), params.get('share_text'), params.get('share_url')]
+    .map((x) => (x || '').trim()).filter((x, i, a) => x && a.indexOf(x) === i && !a.some((y, j) => j !== i && y.length > x.length && y.includes(x))).join('\n');
+  try { sessionStorage.setItem('foodi.shared', shared.slice(0, 2000)); } catch {}
+  history.replaceState(null, '', location.pathname);
+}
 // Einladung zu FoodiSpots ohne Gruppe (?invite=CODE) bzw. in eine Gruppe (?join=CODE): fürs Registrieren merken
 for (const [p, key] of [['invite', 'foodi.pendingInvite'], ['join', 'foodi.pendingJoin']]) {
   const v = params.get(p);
@@ -130,6 +137,9 @@ export async function startApp() {
   if (g) { await selectGroup(g.id); openDeepLink(); } else showGroupScreen();
 }
 export function openDeepLink() {
+  let shared = null;
+  try { shared = sessionStorage.getItem('foodi.shared'); sessionStorage.removeItem('foodi.shared'); } catch {}
+  if (shared) return openAdd(shared);
   const s = deepLink.spot && state.data.spots.find((x) => x.id === deepLink.spot);
   deepLink.spot = null;
   if (!s) return;

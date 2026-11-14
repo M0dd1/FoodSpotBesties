@@ -157,6 +157,36 @@
           cuisines: ['spanish'], category: 'bar', focus: ['Tapas'], price_level: 2, description: 'Tapas-Bar.', specialties: [], website: '' }, error: null };
         return { data: { enriched: false, reason: 'nothing' }, error: null };
       }
+      if (body.action === 'resolve_link') {
+        const t = String(body.text || '');
+        if (/maps\.app\.goo\.gl\/delphi/i.test(t)) {
+          const c = LOOKUP.delphi[0];
+          return { data: { found: true, name: 'Delphi', address: c.address, lat: c.lat, lng: c.lng, link: 'https://maps.app.goo.gl/delphi',
+            candidates: [{ ...c, distance_m: 8 }],
+            google: { ...c, osm_type: null, osm_id: null, cuisines: [], from_link: true, display_name: 'Delphi' } }, error: null };
+        }
+        if (/maps\.app\.goo\.gl\/neu/i.test(t)) {
+          return { data: { found: true, name: 'Bistro Neu', address: 'Neustraße 1, 56068 Koblenz', lat: 50.358, lng: 7.591, link: 'https://maps.app.goo.gl/neu', candidates: [],
+            google: { name: 'Bistro Neu', lat: 50.358, lng: 7.591, address: 'Neustraße 1, 56068 Koblenz', city: 'Koblenz', osm_type: null, osm_id: null, is_food: true,
+              category: 'restaurant', cuisines: [], focus: [], website: '', phone: '', opening_hours: '', from_link: true } }, error: null };
+        }
+        return { data: { found: false, candidates: [] }, error: null };
+      }
+      if (body.action === 'image_candidates') {
+        const s = body.spot || {};
+        if (window.__mock.noImages || (!s.website && !s.osm_id)) return { data: { images: [] }, error: null };
+        return { data: { images: [
+          { url: 'https://delphi.example/hero.jpg', credit: 'Webseite des Lokals (delphi.example)', source: 'https://delphi.example/', kind: 'website' },
+          { url: 'https://upload.wikimedia.org/x.jpg', credit: 'Wikimedia Commons · Max Muster · CC BY-SA 4.0', source: 'https://commons.wikimedia.org/wiki/File:X.jpg', kind: 'commons' },
+        ] }, error: null };
+      }
+      if (body.action === 'fetch_image') {
+        const color = /wikimedia/.test(body.url) ? '#2a7' : '#c84';
+        const cv = document.createElement('canvas'); cv.width = 320; cv.height = 200;
+        const g = cv.getContext('2d'); g.fillStyle = color; g.fillRect(0, 0, 320, 200); g.fillStyle = '#fff'; g.fillRect(40, 40, 120, 60);
+        const blob = await new Promise((r) => cv.toBlob(r, 'image/png'));
+        return { data: new Blob([blob], { type: 'application/octet-stream' }), error: null };
+      }
     }
     return fnErr('unknown function');
   }

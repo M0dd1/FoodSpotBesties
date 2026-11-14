@@ -11,6 +11,8 @@
 - Den richtigen Treffer antippen. Adresse, Küche, Öffnungszeiten und mehr werden eingetragen – kurz prüfen, dann **„Auf die Wunschliste“**.
 - Steht bei der Küche **„vermutet“**, wurde sie im Web ermittelt. Stimmt sie, auf **„Stimmt“** tippen; sonst ändern.
 - Nichts gefunden? **„Im Web recherchieren lassen“** oder **„Ohne Suche eintragen“**. Auf der Karte geht auch: **lange drücken**.
+- **Aus Google Maps:** Ort in Google Maps öffnen → **Teilen** → **FoodiSpots** (Android, wenn FoodiSpots auf dem Startbildschirm installiert ist). Auf dem iPhone: in Google Maps **Teilen → Link kopieren**, dann in FoodiSpots ins Suchfeld einfügen.
+- **Vorschaubild:** Neue Spots bekommen meist automatisch ein Bild (von der Webseite des Lokals oder von Wikimedia, mit Quellenangabe). Ändern: im Spot auf **„🖼️ Bild ändern“** – Vorschlag antippen, Foto eines Gerichts nehmen oder eigenes Foto hochladen.
 
 ## Hingehen und bewerten
 - **„🙋 Will ich auch!“** zeigt den anderen, dass du mit willst.
@@ -22,7 +24,7 @@
 - **Liste**: Suche nach Name, Ort, Küche oder Gericht; sortieren nach Note, Entfernung, „Will ich auch“ …
 - **Filter** (Trichter oben): Wunschliste/besucht, Länderküche, Preis, Mindestnote, „Jetzt geöffnet“, vegetarisch/vegan …
 - **Länderküchen**: welche Küchen ihr schon probiert habt. Antippen zeigt die Spots dieser Küche.
-- **🎲 Wohin heute?** schlägt einen Spot von der Wunschliste vor.
+- **🎲 Wohin heute?** schlägt einen Spot von der Wunschliste vor – nur solche, bei denen ihr noch nicht wart.
 
 ## Gruppe
 - Oben auf den **Gruppennamen** tippen: einladen, Mitglieder, Papierkorb, Lese-Link, Gruppe wechseln.

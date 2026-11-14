@@ -15,7 +15,7 @@ let listRows = [], listShown = 0, listKey = '', listObserver = null;
 
 export function spotRowHtml(s, dist) {
   const st = statsOf(s.id);
-  const cover = st.cover?.thumb_path || st.cover?.photo_path;
+  const cover = s.image_thumb || s.image_path || st.cover?.thumb_path || st.cover?.photo_path;
   return `<li class="spot-item${st.visited ? '' : ' wish'}" data-id="${s.id}">
     <div class="spot-thumb"${cover ? ` data-bg="${esc(cover)}"` : ''}><span>${esc(spotEmoji(s))}</span></div>
     <div style="min-width:0;flex:1">
@@ -160,11 +160,15 @@ export function renderAll(fit) {
 // „Wohin heute?“ – Zufall aus der Wunschliste (mehr „Will ich auch“ = höhere Chance)
 // ------------------------------------------------------------------
 $('#btn-random').addEventListener('click', randomPick);
+let lastPick = null;
 export function randomPick() {
-  const pool = filteredSpots().filter((s) => !statsOf(s.id).visited);
+  // Nur Spots, bei denen ihr noch nicht wart: keine Bewertung und auch kein eingetragener Besuch
+  let pool = filteredSpots().filter((s) => { const st = statsOf(s.id); return !st.visited && !st.lastVisit; });
   if (!pool.length) return toast(state.data.spots.length ? 'Keine offenen Spots auf der Wunschliste (mit diesen Filtern).' : 'Trag zuerst ein paar Spots ein.', true);
+  if (pool.length > 1 && lastPick) pool = pool.filter((s) => s.id !== lastPick);   // „Nochmal“ = ein anderer
   const weighted = pool.flatMap((s) => Array(1 + Math.min(statsOf(s.id).wants, 10)).fill(s));
   const s = weighted[Math.floor(Math.random() * weighted.length)];
+  lastPick = s.id;
   if (state.view !== 'map') setView('map');
   map.setView([s.lat, s.lng], Math.max(map.getZoom(), 15));
   openSpot(s.id, false, { random: true });

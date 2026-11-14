@@ -3,7 +3,7 @@
 // ------------------------------------------------------------------
 // Grundlagen
 // ------------------------------------------------------------------
-export const APP_VERSION = '2.0.0';
+export const APP_VERSION = '2.1.0';
 export const cfg = window.FOODI_CONFIG || {};
 export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));

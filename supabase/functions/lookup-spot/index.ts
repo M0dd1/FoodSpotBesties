@@ -290,6 +290,212 @@ Erfinde nichts. Unbekanntes bleibt leer bzw. null. Antworte am Ende ausschließl
   return result;
 }
 
+// ---------- Geteilter Google-Maps-Link -> Spot ----------
+// Wir lesen nur, was im Link (bzw. in seiner Weiterleitung) und im geteilten Text steht – keine Google-Seiten auslesen.
+const GMAPS_RE = /https?:\/\/(?:maps\.app\.goo\.gl|goo\.gl\/maps|(?:www\.)?google\.[a-z.]{2,6}\/maps|maps\.google\.[a-z.]{2,6})[^\s<>"']*/i;
+const BROWSER_UA = "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Mobile Safari/537.36";
+const isGoogleHost = (h: string) => /(^|\.)(google\.[a-z.]{2,6}|goo\.gl)$/i.test(h);
+
+async function expandLink(start: string) {
+  let u = new URL(start);
+  for (let i = 0; i < 6; i++) {
+    if (!isGoogleHost(u.hostname)) break;
+    if (/consent\.google\./i.test(u.hostname) && u.searchParams.get("continue")) { u = new URL(u.searchParams.get("continue")!); continue; }
+    if (!/goo\.gl$/i.test(u.hostname)) break; // schon die lange Form
+    const r = await fetch(u, { redirect: "manual", headers: { "User-Agent": BROWSER_UA, "Accept-Language": "de" }, signal: AbortSignal.timeout(6000) });
+    await r.body?.cancel();
+    const loc = r.headers.get("location");
+    if (!loc || r.status < 300 || r.status > 399) break;
+    u = new URL(loc, u);
+  }
+  return u;
+}
+
+function parseGoogleUrl(u: URL) {
+  const out: { name?: string; lat?: number; lng?: number; query?: string } = {};
+  const path = decodeURIComponent(u.pathname);
+  const place = path.match(/\/maps\/place\/([^/]+)/);
+  if (place) out.name = place[1].replace(/\+/g, " ").trim();
+  const full = decodeURIComponent(u.href);
+  const d = full.match(/!3d(-?\d{1,2}\.\d+)!4d(-?\d{1,3}\.\d+)/);
+  const at = full.match(/@(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/);
+  const pair = (v: string | null) => v?.match(/^\s*(-?\d{1,2}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)\s*$/);
+  const q = u.searchParams.get("q") ?? u.searchParams.get("query") ?? u.searchParams.get("destination");
+  const ll = pair(q) ?? pair(u.searchParams.get("ll")) ?? pair(u.searchParams.get("center"));
+  const m = d ?? ll ?? at;
+  if (m) { out.lat = Number(m[1]); out.lng = Number(m[2]); }
+  if (q && !pair(q)) out.query = q.replace(/\+/g, " ").trim();
+  if (!out.name && out.query) out.name = out.query.split(",")[0].trim();
+  if (out.lat != null && (Math.abs(out.lat) > 90 || Math.abs(out.lng!) > 180)) { delete out.lat; delete out.lng; }
+  return out;
+}
+
+const metersBetween = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) =>
+  Math.hypot((a.lat - b.lat) * 111320, (a.lng - b.lng) * 111320 * Math.cos(a.lat * Math.PI / 180));
+
+async function resolveLink(text: string) {
+  const raw = String(text ?? "").slice(0, 2000);
+  const link = raw.match(GMAPS_RE)?.[0] ?? null;
+  const lines = raw.replace(GMAPS_RE, "").split(/\r?\n/).map((s) => s.trim()).filter((s) => s && !/^https?:\/\//i.test(s));
+  let textName = lines[0] ?? "", textAddr = lines.slice(1).find((l) => /\d/.test(l) && /,|\d{4,5}/.test(l)) ?? "";
+  if (lines.length === 1 && textName.includes(",")) { const i = textName.indexOf(","); textAddr = textName.slice(i + 1).trim(); textName = textName.slice(0, i).trim(); }
+  let info: ReturnType<typeof parseGoogleUrl> = {};
+  if (link) {
+    try { info = parseGoogleUrl(await expandLink(link)); } catch (e) { console.warn("Link nicht auflösbar", (e as Error).message); }
+  }
+  const name = (info.name || textName || "").slice(0, 120);
+  const address = textAddr || (info.query && info.query.includes(",") ? info.query.split(",").slice(1).join(",").trim() : "");
+  let pos = info.lat != null ? { lat: info.lat, lng: info.lng! } : null;
+  if (!name && !pos) return { found: false, candidates: [] };
+
+  // Lage aus der Adresse, falls der Link keine Koordinaten enthält
+  if (!pos && (address || name)) {
+    try {
+      const rows = await photon({ q: [name, address].filter(Boolean).join(" "), limit: "3" });
+      if (rows[0]) pos = { lat: Number(rows[0].lat), lng: Number(rows[0].lon) };
+    } catch (_) { /* weiter ohne */ }
+  }
+  // Passende Lokale aus OpenStreetMap in der Nähe
+  // deno-lint-ignore no-explicit-any
+  let cands: any[] = [];
+  if (name) {
+    try {
+      const near = pos ? { lat: String(pos.lat), lon: String(pos.lng) } : {};
+      const rows = await photon({ q: name, limit: "10", ...near }, true);
+      // deno-lint-ignore no-explicit-any
+      cands = rows.map(toCandidate).filter((c: any) => c.is_food)
+        // deno-lint-ignore no-explicit-any
+        .map((c: any) => ({ ...c, distance_m: pos ? Math.round(metersBetween(pos, c)) : null }))
+        // deno-lint-ignore no-explicit-any
+        .filter((c: any) => !pos || c.distance_m <= 400)
+        // deno-lint-ignore no-explicit-any
+        .sort((a: any, b: any) => (a.distance_m ?? 0) - (b.distance_m ?? 0)).slice(0, 4);
+    } catch (_) { /* weiter ohne */ }
+  }
+  const google = pos ? { name, lat: pos.lat, lng: pos.lng, address, city: (address.match(/\d{4,5}\s+([^,]+)/) || [])[1] ?? "",
+    osm_type: null, osm_id: null, is_food: true, category: "restaurant", cuisines: [], focus: [], cuisine_generic: false, osm_cuisine: "",
+    website: "", phone: "", opening_hours: "", diet_veg: null, diet_vegan: null, display_name: [name, address].filter(Boolean).join(", "), from_link: true } : null;
+  return { found: true, name, address, lat: pos?.lat ?? null, lng: pos?.lng ?? null, link, candidates: cands, google };
+}
+
+// ---------- Vorschaubilder ----------
+// Quellen: Foto am OSM-Eintrag (image / wikimedia_commons / wikidata) und Vorschaubild der Webseite des Lokals.
+function safeRemote(raw: string) {
+  let u: URL;
+  try { u = new URL(raw); } catch { return null; }
+  if (!/^https?:$/.test(u.protocol) || u.username || u.password) return null;
+  if (u.port && !["80", "443"].includes(u.port)) return null;
+  const h = u.hostname.toLowerCase();
+  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal") || h.endsWith(".supabase.co") || !h.includes(".")) return null;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.startsWith("[")) return null; // keine IP-Adressen
+  return u;
+}
+
+async function commonsImage(file: string) {
+  const title = "File:" + file.replace(/^(File|Datei):/i, "").trim();
+  const u = new URL("https://commons.wikimedia.org/w/api.php");
+  for (const [k, v] of Object.entries({ action: "query", format: "json", prop: "imageinfo", iiprop: "url|extmetadata", iiurlwidth: "1200", titles: title })) u.searchParams.set(k, v);
+  const r = await fetch(u, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6000) });
+  if (!r.ok) return null;
+  // deno-lint-ignore no-explicit-any
+  const p: any = Object.values((await r.json()).query?.pages ?? {})[0];
+  const ii = p?.imageinfo?.[0];
+  if (!ii?.thumburl) return null;
+  const strip = (s: string) => String(s ?? "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+  const artist = strip(ii.extmetadata?.Artist?.value).slice(0, 120);
+  const lic = strip(ii.extmetadata?.LicenseShortName?.value).slice(0, 40);
+  return { url: ii.thumburl, credit: ["Wikimedia Commons", artist, lic].filter(Boolean).join(" · "), source: ii.descriptionurl ?? ii.url, kind: "commons" };
+}
+
+async function wikidataImage(q: string) {
+  if (!/^Q\d+$/.test(q)) return null;
+  const r = await fetch(`https://www.wikidata.org/wiki/Special:EntityData/${q}.json`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(6000) });
+  if (!r.ok) return null;
+  const file = (await r.json()).entities?.[q]?.claims?.P18?.[0]?.mainsnak?.datavalue?.value;
+  return file ? await commonsImage(file) : null;
+}
+
+const SKIP_IMG = /logo|icon|favicon|sprite|lockup|badge|button|arrow|flag|pixel|spacer|avatar|payment|paypal|visa|social|facebook|instagram|tripadvisor|google|apple|whatsapp|placeholder|loader|banner-cookie|qr/i;
+
+async function websiteImages(site: string) {
+  const u = safeRemote(site);
+  if (!u) return [];
+  const r = await fetch(u, { headers: { "User-Agent": BROWSER_UA, Accept: "text/html", "Accept-Language": "de" }, signal: AbortSignal.timeout(8000) });
+  if (!r.ok || !/html/i.test(r.headers.get("content-type") ?? "html")) { await r.body?.cancel(); return []; }
+  const html = (await r.text()).slice(0, 600_000);
+  const base = r.url || u.href;
+  const found: string[] = [];
+  const add = (v?: string | null) => {
+    if (!v || v.startsWith("data:")) return;
+    try {
+      let abs = new URL(v.replace(/&amp;/g, "&").trim(), base).href;
+      abs = abs.replace(/-\d{2,4}x\d{2,4}(?=\.(?:jpe?g|png|webp)(?:\?|$))/i, ""); // WordPress-Vorschau -> Original
+      if (!found.includes(abs)) found.push(abs);
+    } catch (_) { /* ungültig */ }
+  };
+  for (const m of html.matchAll(/<meta[^>]+>/gi)) {
+    const tag = m[0];
+    if (/(?:property|name)\s*=\s*["'](?:og:image(?::secure_url)?|twitter:image(?::src)?)["']/i.test(tag)) add(tag.match(/content\s*=\s*["']([^"']+)["']/i)?.[1]);
+  }
+  for (const m of html.matchAll(/<img[^>]+>/gi)) {
+    const tag = m[0];
+    const src = tag.match(/\s(?:data-src|data-lazy-src|src)\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (!src || !/\.(?:jpe?g|webp|png)(?:\?|$)/i.test(src) || SKIP_IMG.test(src) || SKIP_IMG.test(tag.match(/alt\s*=\s*["']([^"']*)/i)?.[1] ?? "")) continue;
+    const w = Number(tag.match(/\swidth\s*=\s*["']?(\d+)/i)?.[1] ?? 0);
+    if (w && w < 250) continue;
+    add(src);
+    if (found.length >= 10) break;
+  }
+  const host = new URL(base).hostname.replace(/^www\./, "");
+  return found.filter((x) => safeRemote(x) && !SKIP_IMG.test(new URL(x).pathname)).slice(0, 6)
+    .map((url) => ({ url, credit: `Webseite des Lokals (${host})`, source: base, kind: "website" }));
+}
+
+async function imageCandidates(c: { website?: string; osm_type?: string; osm_id?: number | string }) {
+  const key = `images:${c.osm_type ?? ""}:${c.osm_id ?? ""}:${String(c.website ?? "").toLowerCase()}`;
+  const cached = await cacheGet(key, 14);
+  if (cached) return cached;
+  // deno-lint-ignore no-explicit-any
+  const images: any[] = [];
+  let website = String(c.website ?? "");
+  if (c.osm_type && c.osm_id && ["node", "way", "relation"].includes(c.osm_type)) {
+    try {
+      const [row] = await osmTags([{ osm_type: c.osm_type, osm_id: c.osm_id, category: "amenity", type: "restaurant" }]);
+      const t = row?.extratags ?? {};
+      if (!website) website = t.website ?? t["contact:website"] ?? "";
+      const commons = t.wikimedia_commons?.startsWith("File:") ? t.wikimedia_commons : (t.image?.match(/commons\.wikimedia\.org\/wiki\/(File:[^?#]+)/)?.[1] ?? null);
+      if (commons) { const im = await commonsImage(decodeURIComponent(commons)).catch(() => null); if (im) images.push(im); }
+      else if (t.image && safeRemote(t.image)) images.push({ url: t.image, credit: "Foto aus OpenStreetMap", source: t.image, kind: "osm" });
+      if (!images.length && t.wikidata) { const im = await wikidataImage(t.wikidata).catch(() => null); if (im) images.push(im); }
+    } catch (_) { /* weiter */ }
+  }
+  if (website) images.push(...await websiteImages(website).catch(() => []));
+  const result = { images: images.slice(0, 8) };
+  await cachePut(key, result);
+  return result;
+}
+
+const IMG_TYPES = /^image\/(jpeg|png|webp|gif|avif)/i;
+async function fetchImage(raw: string) {
+  const u = safeRemote(raw);
+  if (!u) return json({ error: "Bildadresse nicht erlaubt" }, 400);
+  const r = await fetch(u, { headers: { "User-Agent": BROWSER_UA, Accept: "image/avif,image/webp,image/*", Referer: u.origin + "/" }, signal: AbortSignal.timeout(10000) });
+  const type = r.headers.get("content-type") ?? "";
+  if (!r.ok || !IMG_TYPES.test(type) || !safeRemote(r.url || u.href)) { await r.body?.cancel(); return json({ error: "Kein Bild" }, 422); }
+  const max = 8 * 1024 * 1024;
+  const len = Number(r.headers.get("content-length") ?? 0);
+  if (len > max) { await r.body?.cancel(); return json({ error: "Bild zu groß" }, 413); }
+  const reader = r.body!.getReader(); const parts: Uint8Array[] = []; let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel(); return json({ error: "Bild zu groß" }, 413); }
+    parts.push(value);
+  }
+  return new Response(new Blob(parts), { headers: { ...cors, "Content-Type": "application/octet-stream", "X-Image-Type": type.split(";")[0], "Cache-Control": "private, max-age=86400" } });
+}
+
 const MAX_PER_DAY = Number(Deno.env.get("LOOKUP_MAX_PER_DAY") ?? 200);
 
 Deno.serve(async (req) => {
@@ -312,6 +518,9 @@ Deno.serve(async (req) => {
       return json(await search(q, body.near));
     }
     if (body.action === "enrich") return json(await enrich({ q: body.q, candidate: body.candidate }));
+    if (body.action === "resolve_link") return json(await resolveLink(String(body.text ?? "")));
+    if (body.action === "image_candidates") return json(await imageCandidates(body.spot ?? {}));
+    if (body.action === "fetch_image") return await fetchImage(String(body.url ?? ""));
     return json({ error: "Unbekannte Aktion" }, 400);
   } catch (err) {
     console.error(err);

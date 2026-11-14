@@ -2,7 +2,7 @@
 import { $$, TRASH_DAYS, canEdit, esc, fmtDate, nameOf, spotEmoji, state, toast } from './core.js';
 import { head, openSheet } from './ui.js';
 import { editRow, processOutbox, remove } from './sync.js';
-import { dishPaths } from './photos.js';
+import { dishPaths, spotImagePaths } from './photos.js';
 import { renderAll } from './views.js';
 import { SPOT_FIELDS, openSpot, pick } from './spots.js';
 
@@ -36,7 +36,7 @@ export function openTrash() {
   $$('[data-purge]', body).forEach((b) => b.addEventListener('click', async () => {
     const s = t.spots.find((x) => x.id === b.dataset.purge); if (!s) return;
     if (!confirm(`„${s.name}“ mit allen Bewertungen, Gerichten und Fotos endgültig löschen? Das lässt sich nicht rückgängig machen.`)) return;
-    await remove('spots', s.id, { paths: dishPaths(t.dishes.filter((x) => x.spot_id === s.id)) });
+    await remove('spots', s.id, { paths: [...dishPaths(t.dishes.filter((x) => x.spot_id === s.id)), ...spotImagePaths([s])] });
     renderAll(false); processOutbox(); openTrash();
     toast('Endgültig gelöscht.');
   }));

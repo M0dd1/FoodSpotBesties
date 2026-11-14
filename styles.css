@@ -434,3 +434,15 @@ label.chip.check input { width: 18px; height: 18px; min-height: 0; margin: 0; pa
 .lightbox img { max-height: 76vh; max-height: 76dvh; border-radius: 10px; }
 .lightbox-caption { color: #fff; text-align: center; max-width: 90vw; }
 .lightbox-caption .stars-static .off { color: rgba(255,255,255,.3); }
+
+/* ---------- 2.1: Vorschaubilder ---------- */
+.cover { position: relative; cursor: zoom-in; }
+.cover-credit { position: absolute; right: 8px; bottom: 6px; max-width: 75%; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  background: rgba(0, 0, 0, .55); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.img-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.img-opt { position: relative; aspect-ratio: 1; border-radius: 12px; border: 1.5px solid var(--border); background: var(--surface-2) center/cover no-repeat;
+  display: grid; place-items: center; text-align: center; font: inherit; font-size: 13px; color: var(--muted); cursor: pointer; padding: 0; overflow: hidden; }
+.img-opt.own { border-style: dashed; }
+.img-opt:focus-visible, .img-opt:hover { border-color: var(--accent, #c8442f); }
+.img-opt .cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px; font-size: 11px; color: #fff; background: linear-gradient(transparent, rgba(0, 0, 0, .65));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
